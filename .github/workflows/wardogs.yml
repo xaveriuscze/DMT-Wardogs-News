@@ -26,6 +26,10 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install translator
+        run: pip install -r requirements.txt
+
+
       - name: Test Discord webhooks
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
