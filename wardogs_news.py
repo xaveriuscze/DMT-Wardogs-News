@@ -57,13 +57,14 @@ def fetch_news():
 
 
 def plain(raw):
-    raw = re.sub(r'\[/?(?:url|img|list|b|i|h\d|previewyoutube|table|tr|td|th|code|quote)[^\]]*\]', ' ', raw, flags=re.I)
+    # Steam uses BBCode, including [p], [list], [*], and formatting tags.
+    raw = re.sub(r'\[(?:/p|p|br|/list|list|\*)\]', '\n', raw, flags=re.I)
+    raw = re.sub(r'\[/?[^\]\n]+\]', ' ', raw)
     raw = re.sub(r'<[^>]*>', ' ', raw)
     return html.unescape(raw).replace('\r', '\n')
 
 
 def chunks(text):
-    # Prefer bullet lines and paragraphs to keep changes separated.
     lines = [re.sub(r'\s+', ' ', x).strip(' -•\t') for x in plain(text).split('\n')]
     return [x for x in lines if len(x) >= 12]
 
@@ -78,10 +79,13 @@ def classify(line):
 
 
 def translate(text):
+    # One request per squad/news item, rather than one per bullet.
+    # Translation is best-effort: free unofficial Google access can be throttled.
     try:
-        return GoogleTranslator(source='auto', target='cs').translate(text[:3500]) or text
+        result = GoogleTranslator(source='en', target='cs').translate(text[:3500])
+        return result or text
     except Exception as error:
-        print(f'Preklad selhal ({type(error).__name__}), pouzivam original.')
+        print(f'Preklad nedostupny ({type(error).__name__}); odesilam anglicky text.')
         return text
 
 
@@ -132,12 +136,15 @@ def main():
         for squad, topics in per_squad.items():
             if not topics:
                 continue
-            parts = []
+            # Keep labels in Czech and translate all bullets in a single request.
+            labels = []
+            raw_lines = []
             for label, lines in topics.items():
-                parts.append(f'**{label}**')
-                for line in lines:
-                    parts.append('• ' + translate(line)[:550])
-            description = '\n'.join(parts)[:3900]
+                labels.append(label)
+                raw_lines.extend(lines)
+            raw_lines = list(dict.fromkeys(raw_lines))[:12]
+            translated = translate('\n'.join('• ' + line[:420] for line in raw_lines))
+            description = '**' + ' | '.join(labels) + '**\n' + translated[:3500]
             send(squad, item, description)
             print(f'OK: {squad}: {item.get("title", "")[:90]}')
         # Mark only after all matching webhook deliveries succeed.
