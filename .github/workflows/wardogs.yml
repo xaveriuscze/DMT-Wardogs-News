@@ -26,6 +26,17 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Test Discord webhooks
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          DISCORD_ASSAULT: ${{ secrets.DISCORD_ASSAULT }}
+          DISCORD_RECON: ${{ secrets.DISCORD_RECON }}
+          DISCORD_ARMOR: ${{ secrets.DISCORD_ARMOR }}
+          DISCORD_AIR: ${{ secrets.DISCORD_AIR }}
+          DISCORD_BUILDING: ${{ secrets.DISCORD_BUILDING }}
+        run: python test_discord.py
+
+
       - name: Check Wardogs news
         env:
           DISCORD_ASSAULT: ${{ secrets.DISCORD_ASSAULT }}
