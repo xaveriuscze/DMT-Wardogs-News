@@ -8,14 +8,13 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from deep_translator import GoogleTranslator
+import argostranslate.package
+import argostranslate.translate
 
 APP_ID = 1867240
 STATE = Path('seen_news.json')
 URL = f'https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?{urllib.parse.urlencode({"appid": APP_ID, "count": 30, "maxlength": 0})}'
 WEBHOOKS = {s: os.getenv(f'DISCORD_{s}') for s in ('ASSAULT', 'RECON', 'ARMOR', 'AIR', 'BUILDING')}
-# Each category has a label and topic-specific patterns. Generic 'ammo' or 'weapon'
-# is deliberately not enough to identify a squad.
 TOPICS = {
     'ASSAULT': {
         '🔫 Pěchotní výzbroj': [r'\b(assault rifle|battle rifle|submachine gun|\bsmg\b|\blmg\b|shotgun|infantry weapon|pistol|handgun)\b'],
@@ -49,25 +48,22 @@ TOPICS = {
     },
 }
 
+_translation_ready = False
 
 def fetch_news():
     req = urllib.request.Request(URL, headers={'User-Agent': 'DMT-News/1.1'})
     with urllib.request.urlopen(req, timeout=30) as response:
         return json.load(response)['appnews']['newsitems']
 
-
 def plain(raw):
-    # Steam uses BBCode, including [p], [list], [*], and formatting tags.
     raw = re.sub(r'\[(?:/p|p|br|/list|list|\*)\]', '\n', raw, flags=re.I)
     raw = re.sub(r'\[/?[^\]\n]+\]', ' ', raw)
     raw = re.sub(r'<[^>]*>', ' ', raw)
     return html.unescape(raw).replace('\r', '\n')
 
-
 def chunks(text):
     lines = [re.sub(r'\s+', ' ', x).strip(' -•\t') for x in plain(text).split('\n')]
     return [x for x in lines if len(x) >= 12]
-
 
 def classify(line):
     result = {}
@@ -77,17 +73,44 @@ def classify(line):
             result[squad] = matched
     return result
 
+def _prepare_translation():
+    global _translation_ready
+    if _translation_ready:
+        return
+    installed = argostranslate.translate.get_installed_languages()
+    english = next((x for x in installed if x.code == 'en'), None)
+    czech = next((x for x in installed if x.code == 'cs'), None)
+    if english and czech:
+        try:
+            english.get_translation(czech)
+            _translation_ready = True
+            return
+        except Exception:
+            pass
+    print('Pripravuji bezplatny offline preklad Argos Translate (EN -> CS)...')
+    argostranslate.package.update_package_index()
+    packages = argostranslate.package.get_available_packages()
+    direct = next((p for p in packages if p.from_code == 'en' and p.to_code == 'cs'), None)
+    if direct:
+        argostranslate.package.install_from_path(direct.download())
+    else:
+        # Pokud primy model neni dostupny, zkusime preklad pres nemcinu.
+        first = next((p for p in packages if p.from_code == 'en' and p.to_code == 'de'), None)
+        second = next((p for p in packages if p.from_code == 'de' and p.to_code == 'cs'), None)
+        if not (first and second):
+            raise RuntimeError('Model EN -> CS ani cesta EN -> DE -> CS nejsou dostupne.')
+        for p in (first, second):
+            argostranslate.package.install_from_path(p.download())
+    _translation_ready = True
 
 def translate(text):
-    # One request per squad/news item, rather than one per bullet.
-    # Translation is best-effort: free unofficial Google access can be throttled.
     try:
-        result = GoogleTranslator(source='en', target='cs').translate(text[:3500])
+        _prepare_translation()
+        result = argostranslate.translate.translate(text[:3500], 'en', 'cs')
         return result or text
     except Exception as error:
-        print(f'Preklad nedostupny ({type(error).__name__}); odesilam anglicky text.')
+        print(f'Preklad Argos nedostupny ({type(error).__name__}: {error}); odesilam anglicky text.')
         return text
-
 
 def send(squad, item, description):
     webhook = WEBHOOKS[squad]
@@ -113,7 +136,6 @@ def send(squad, item, description):
                 continue
             raise
 
-
 def main():
     news = fetch_news()
     if not STATE.exists():
@@ -132,11 +154,9 @@ def main():
                     per_squad[squad].setdefault(label, [])
                     if len(per_squad[squad][label]) < 4:
                         per_squad[squad][label].append(line)
-        # If no relevant class-specific details, avoid publishing irrelevant updates.
         for squad, topics in per_squad.items():
             if not topics:
                 continue
-            # Keep labels in Czech and translate all bullets in a single request.
             labels = []
             raw_lines = []
             for label, lines in topics.items():
@@ -147,10 +167,8 @@ def main():
             description = '**' + ' | '.join(labels) + '**\n' + translated[:3500]
             send(squad, item, description)
             print(f'OK: {squad}: {item.get("title", "")[:90]}')
-        # Mark only after all matching webhook deliveries succeed.
         seen.add(gid)
         STATE.write_text(json.dumps(sorted(seen), indent=2), encoding='utf-8')
-
 
 if __name__ == '__main__':
     main()
