@@ -1,0 +1,48 @@
+
+name: DMT Wardogs News
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wardogs-news
+  cancel-in-progress: false
+
+jobs:
+  check-news:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check Wardogs news
+        env:
+          DISCORD_ASSAULT: ${{ secrets.DISCORD_ASSAULT }}
+          DISCORD_RECON: ${{ secrets.DISCORD_RECON }}
+          DISCORD_ARMOR: ${{ secrets.DISCORD_ARMOR }}
+          DISCORD_AIR: ${{ secrets.DISCORD_AIR }}
+          DISCORD_BUILDING: ${{ secrets.DISCORD_BUILDING }}
+        run: python wardogs_news.py
+
+      - name: Save processed news
+        run: |
+          if [ -f seen_news.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add seen_news.json
+            if ! git diff --cached --quiet; then
+              git commit -m "Update processed Wardogs news"
+              git push
+            fi
+          fi
